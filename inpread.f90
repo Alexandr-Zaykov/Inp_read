@@ -66,16 +66,16 @@ Module input
       procedure, public  :: throw_error => logic_throw_error 
   END type input_logic
   Contains
-    Subroutine logic_throw_error(this,comment)
+    Subroutine logic_throw_error(this,assumption)
       class(input_logic), intent(inout)           :: this
-      character(len=*), intent(in),optional       :: comment
+      character(len=*), intent(in),optional       :: assumption
      
       IF (.NOT.this%is_present) then
         IF (this%is_critical) THEN
-          PRINT*, "Error: ", this%name(1:len_trim(this%name)), " is not present in ",this%location(1:len_trim(this%location)),". ", comment
+          PRINT*, "Error: ", this%name(1:len_trim(this%name)), " is not present in ",this%location(1:len_trim(this%location)),". ", assumption
           CALL EXIT(1)
         END IF
-        PRINT*, "Warning: ", this%name(1:len_trim(this%name)), " is not present in ",this%location(1:len_trim(this%location)),". ", comment
+        PRINT*, "Warning: ", this%name(1:len_trim(this%name)), " is not present in ",this%location(1:len_trim(this%location)),". ", assumption
       END IF
       
     END subroutine logic_throw_error
@@ -89,7 +89,7 @@ Program InpRead
   implicit none
 
   integer                                         :: start_position=0, end_position=0
-  integer,parameter                               :: n_molecules=3
+  integer                                         :: n_molecules
   integer                                         :: i,j,k,l 
   character(len=2)                                :: element
   character(len=5)                                :: type
@@ -97,25 +97,22 @@ Program InpRead
   character(len=8)                                :: inpfile
   character(len=120)                              :: line
   character(len=1),dimension(3)                   :: axis_letter 
-  character(len=1),dimension(4)                   :: state_letter ! I am keeping these separate
-  character(len=1),dimension(n_molecules+1)       :: allowed_ends
+  character(len=1),dimension(4)                   :: state_letter
+  character(len=1),allocatable                    :: allowed_ends(:)
   character(len=4),dimension(5)                   :: allowed_types
 
   type(input_logic)                               :: basis_logic,flags_logic,inp_logic
   type(input_logic),allocatable                   :: geom_logic(:),trro_logic(:),energy_logic(:)
 
   character(len=40)                               :: debug(3)
-  
+  character(len=1)                                :: char_debug
+ 
+  n_molecules=3
   allowed_types = (/'geom','ener','trro','basi','flag'/)
-  allowed_ends = (/'a','b','c','s'/)
   state_letter = (/'s','t','c','a'/)
   axis_letter = (/'x','y','z'/)
 
-  ALLOCATE(molecule(n_molecules),geom_logic(n_molecules),trro_logic(6*(n_molecules-1)),energy_logic(n_molecules*4))
-  ! Important allocation. Must be 0 in length!
-  ALLOCATE(comment(0),flag(0))
-
-  inpfile = 'test.inp'
+  inpfile = 'test.inp' !this will be read
   inp_logic%name=inpfile
   inp_logic%is_critical=.TRUE.
   basis_logic%name='Basis set definition'
@@ -123,6 +120,35 @@ Program InpRead
   flags_logic%name='Calculation definition'
   flags_logic%location=inpfile
   basis_logic%is_critical=.TRUE.
+  
+  OPEN(3,file=inpfile,status='old',err=8)
+
+  DO WHILE(.NOT.(flags_logic%is_present))
+    READ(3,'(a)',end=1) line
+    line=ADJUSTL(line)
+    call tolower(line)
+    IF (line(1:6).ne.'flags:') CYCLE
+    end_position=INDEX(line,'dimer')
+    IF(end_position.eq.0) CYCLE
+    PRINT*, "Assuming this is a dimer!"
+    flags_logic%is_present=.TRUE.
+    n_molecules=2
+    EXIT
+  ENDDO
+ 
+1 CONTINUE    
+  ALLOCATE(allowed_ends(n_molecules+1))
+  DO i=97,96+n_molecules
+    allowed_ends(i-96)=char(i)
+  ENDDO
+  allowed_ends(n_molecules+1)='s'
+
+  REWIND(3)
+
+  ALLOCATE(molecule(n_molecules),geom_logic(n_molecules),trro_logic(6*(n_molecules-1)),energy_logic(n_molecules*4))
+  ! Important allocation. Must be 0 in length!
+  ALLOCATE(comment(0),flag(0))
+
   DO i=1,n_molecules
     geom_logic(i)%name='Geometry of '//char(uppercase(allowed_ends(i)))
     geom_logic(i)%is_critical=.TRUE.
@@ -142,11 +168,10 @@ Program InpRead
     ENDDO
   ENDDO
   
-  OPEN(3,file=inpfile,status='old',err=8)
 
   ! READING BLOCK
   ! Prunes the comments from other stuff, sets types.
-1 READ(3,'(a)',end=2) line
+2 READ(3,'(a)',end=3) line
   line=ADJUSTL(line)
   signal=line(1:6)
   CALL tolower(signal)
@@ -155,9 +180,9 @@ Program InpRead
     IF(signal(1:1).eq.'!') i=2
     ! Behold, Fortran 2003! 
     comment=[comment,line(i:120)]
-    GOTO 1
+    GOTO 2
   ENDIF
-  IF (.NOT.( (signal(6:6).eq.':') .AND. (ANY(allowed_types.eq.signal(1:4))) .AND. (ANY(allowed_ends.eq.signal(5:5))) )) GOTO 1
+  IF (.NOT.( (signal(6:6).eq.':') .AND. (ANY(allowed_types.eq.signal(1:4))) .AND. (ANY(allowed_ends.eq.signal(5:5))) )) GOTO 2
   CALL tolower(line)
   type=signal(1:5)
   end_position=INDEX(line,';')
@@ -167,8 +192,8 @@ Program InpRead
   ! I can save some lines by making a function
   SELECT CASE (type(1:4))
   CASE ('geom')
-    IF (.NOT.(ANY(allowed_ends(1:SIZE(allowed_ends)-1).eq.type(5:5)))) GOTO 1
-    i=FINDLOC(allowed_ends,type(5:5),dim=1)
+    IF (.NOT.(ANY(allowed_ends(1:SIZE(allowed_ends)-1).eq.type(5:5)))) GOTO 2
+    i=FINDLOC(allowed_ends(1:SIZE(allowed_ends)-1),type(5:5),dim=1)
     geom_logic(i)%is_present=.TRUE.
     end_position=check_end(line)
     line=ADJUSTL(line(1:end_position-1))
@@ -197,8 +222,8 @@ Program InpRead
     CLOSE(j)
 
   CASE ('ener')
-    IF (.NOT.(ANY(allowed_ends(1:SIZE(allowed_ends)-1).eq.type(5:5)))) GOTO 1
-    i=FINDLOC(allowed_ends,type(5:5),dim=1)
+    IF (.NOT.(ANY(allowed_ends(1:SIZE(allowed_ends)-1).eq.type(5:5)))) GOTO 2
+    i=FINDLOC(allowed_ends(1:SIZE(allowed_ends)-1),type(5:5),dim=1)
 
     DO j=1,4
       energy_logic((i-1)*4+j)%is_present=.TRUE.
@@ -213,7 +238,7 @@ Program InpRead
     ENDDO
     
   CASE ('trro')
-    IF (.NOT.(ANY(allowed_ends(2:SIZE(allowed_ends)-1).eq.type(5:5)))) GOTO 1
+    IF (.NOT.(ANY(allowed_ends(2:SIZE(allowed_ends)-1).eq.type(5:5)))) GOTO 2
     i=FINDLOC(allowed_ends,type(5:5),dim=1)
     
     DO j=1,3
@@ -233,35 +258,29 @@ Program InpRead
     ENDDO
 
   CASE ('basi')
-    IF ('s'.ne.type(5:5)) GOTO 1
-    basis_logic%is_present=.TRUE.
+    IF ('s'.ne.type(5:5)) GOTO 2
     end_position=check_end(line)
-    IF(ANY((/0,1/).eq.end_position)) THEN
-      basis_logic%is_present=.FALSE.
-      GOTO 1
-    ENDIF
+    IF(ANY((/0,1/).eq.end_position)) GOTO 2
+    basis_logic%is_present=.TRUE.
     line=ADJUSTL(line(1:end_position-1))
     ! Read the basis_logic set here
 
   CASE ('flag')
-    IF ('s'.ne.type(5:5)) GOTO 1
-    flags_logic%is_present=.TRUE.
+    IF ('s'.ne.type(5:5)) GOTO 2
     end_position=check_end(line)
-    IF(ANY((/0,1/).eq.end_position)) THEN
-      flags_logic%is_present=.FALSE.
-      GOTO 1
-    ENDIF
+    IF(ANY((/0,1/).eq.end_position)) GOTO 2
+    flags_logic%is_present=.TRUE.
     line=ADJUSTL(line(1:end_position-1))
     ! Read flags_logic here
     
   END SELECT
 
-  GOTO 1
-2 CONTINUE
+  GOTO 2
+3 CONTINUE
   ! CHECKING BLOCK
   ! Check if the file contains the required data
   ! Throw errors (=> EXIT) after warnings
-  CALL flags_logic%throw_error("Assuming this is a SP calculation!")
+  CALL flags_logic%throw_error("Assuming this is a SP calculation with a trimer!")
   DO i=1,n_molecules
     DO j=1,4
       WRITE(line,'(f8.3)') molecule(i)%energy(j)
