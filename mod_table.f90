@@ -5,6 +5,7 @@ implicit none
 ! ========================================================================
 
   character(2)                    :: Table(103)
+  character(5)                    :: calc_flags(8)
   character(1)                    :: Orbital(0:6)
   integer                         :: OrbSize(0:6)
   character(10)                   :: labelSph(49)
@@ -34,5 +35,7 @@ implicit none
                           '      gyx3','     gx2yz','     gxyz2','      gyz3','       gz4','      gxz3','     gx2z2','      gzx3','       gy4',                          &
              '      hyx4','     hx3yz','    hyx2z2','     hxyz3','      hyz4','    hx2y2z','      hxz4','     hx2z3','     hx3z2','      hzy4','      hxy4',             &
 '       i-6','       i-5','       i-4','       i-3','       i-2','       i-1','        i0','        i1','        i2','        i3','        i4','        i5','        i6' /
+
+  data calc_flags /'dimer','trime','sp   ','opt  ','scan ','genet','full ','simple'/ !DImer TRimer Single-Point OPt SCan FUll SImple
 
 End Module mod_table

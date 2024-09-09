@@ -56,7 +56,7 @@ END Module molecules
 Module input
   implicit none
 
-  character(len=20),allocatable                   :: flag(:)
+  character(len=10),allocatable                   :: flag(:)
   character(len=120),allocatable                  :: comment(:)
   Type input_logic
     logical                                       :: is_critical=.FALSE., is_present=.FALSE.
@@ -95,6 +95,7 @@ Program InpRead
   character(len=5)                                :: type
   character(len=6)                                :: signal
   character(len=8)                                :: inpfile
+  character(len=10)                               :: tmp
   character(len=120)                              :: line
   character(len=1),dimension(3)                   :: axis_letter 
   character(len=1),dimension(4)                   :: state_letter
@@ -130,7 +131,6 @@ Program InpRead
     IF (line(1:6).ne.'flags:') CYCLE
     end_position=INDEX(line,'dimer')
     IF(end_position.eq.0) CYCLE
-    PRINT*, "Assuming this is a dimer!"
     flags_logic%is_present=.TRUE.
     n_molecules=2
     EXIT
@@ -139,6 +139,7 @@ Program InpRead
 1 CONTINUE    
   ALLOCATE(allowed_ends(n_molecules+1))
   DO i=97,96+n_molecules
+    ! a=97, z=122
     allowed_ends(i-96)=char(i)
   ENDDO
   allowed_ends(n_molecules+1)='s'
@@ -161,10 +162,10 @@ Program InpRead
   ENDDO
   DO i=1,n_molecules-1
    DO j=1,3
-      trro_logic((i-1)*3+j)%name=  'T'//axis_letter(j)//' of '//char(uppercase(allowed_ends(i+1)))
-      trro_logic((i-1)*3+j+6)%name='R'//axis_letter(j)//' of '//char(uppercase(allowed_ends(i+1)))
-      trro_logic((i-1)*3+j)%location=inpfile
-      trro_logic((i-1)*3+j+6)%location=inpfile
+      trro_logic((i-1)*n_molecules+j)%name=  'T'//axis_letter(j)//' of '//char(uppercase(allowed_ends(i+1)))
+      trro_logic((i-1)*n_molecules+j+3*(n_molecules-1))%name='R'//axis_letter(j)//' of '//char(uppercase(allowed_ends(i+1)))
+      trro_logic((i-1)*n_molecules+j)%location=inpfile
+      trro_logic((i-1)*n_molecules+j+3*(n_molecules-1))%location=inpfile
     ENDDO
   ENDDO
   
@@ -242,16 +243,16 @@ Program InpRead
     i=FINDLOC(allowed_ends,type(5:5),dim=1)
     
     DO j=1,3
-      trro_logic((i-2)*3+j)%is_present=.TRUE.
-      trro_logic((i-2)*3+j+6)%is_present=.TRUE.
+      trro_logic((i-2)*n_molecules+j)%is_present=.TRUE.
+      trro_logic((i-2)*n_molecules+j+3*(n_molecules-1))%is_present=.TRUE.
 
       start_position=INDEX(line,'t'//axis_letter(j))+3
-      IF(start_position.eq.3) trro_logic((i-2)*3+j)%is_present=.FALSE.
+      IF(start_position.eq.3) trro_logic((i-2)*n_molecules+j)%is_present=.FALSE.
       end_position=check_end(line,start_position)+start_position-2
     ! READ T data here
     
       start_position=INDEX(line,'r'//axis_letter(j))+3
-      IF(start_position.eq.3) trro_logic((i-2)*3+j+6)%is_present=.FALSE.
+      IF(start_position.eq.3) trro_logic((i-2)*n_molecules+j+3*(n_molecules-1))%is_present=.FALSE.
       end_position=check_end(line,start_position)+start_position-2
     ! READ R data here
 
@@ -268,10 +269,18 @@ Program InpRead
   CASE ('flag')
     IF ('s'.ne.type(5:5)) GOTO 2
     end_position=check_end(line)
+    IF(11.lt.end_position) GOTO 84
     IF(ANY((/0,1/).eq.end_position)) GOTO 2
     flags_logic%is_present=.TRUE.
-    line=ADJUSTL(line(1:end_position-1))
-    ! Read flags_logic here
+    DO WHILE(.TRUE.)
+      WRITE(tmp,'(a)') line(1:end_position-1)  
+      IF(.NOT.(ANY(calc_flags.eq.tmp(1:i)))) GOTO 84
+      flag=[flag,tmp]
+      line=ADJUSTL(line(end_position:120))
+      end_position=check_end(line)
+      IF(11.lt.end_position) GOTO 84
+      IF(ANY((/0,1/).eq.end_position)) GOTO 2
+    ENDDO
     
   END SELECT
 
@@ -290,8 +299,8 @@ Program InpRead
   ENDDO
   DO i=1,n_molecules-1
     DO j=1,3
-      CALL trro_logic((i-1)*3+j)%throw_error("Assuming 0.0 Å!")
-      CALL trro_logic((i-1)*3+j+3)%throw_error("Assuming 0.0°!")
+      CALL trro_logic((i-1)*n_molecules+j)%throw_error("Assuming 0.0 Å!")
+      CALL trro_logic((i-1)*n_molecules+j+n_molecules)%throw_error("Assuming 0.0°!")
     ENDDO
   ENDDO
   DO i=1,n_molecules
@@ -318,26 +327,29 @@ Program InpRead
     energy_logic((i-1)*4+j)%is_critical=.TRUE.
     energy_logic((i-1)*4+j)%location=line(start_position:end_position)
     call energy_logic((i-1)*4+j)%throw_error("Is the energy format correct?")
+84  flags_logic%is_present=.FALSE.
+    flags_logic%is_critical=.TRUE.
+    flags_logic%location=line(1:end_position)
+    call flags_logic%throw_error("Not a known calculation flag!")
  
 9 CONTINUE  
 End Program InpRead
 
-Subroutine tolower(line)
-
+Subroutine tolower(string)
   implicit none
 
 ! ========================================================================
 ! Convert upercase characters in line into lowercase
 
-  character(*),intent(inout)      :: line
+  character(*),intent(inout)      :: string
   integer                         :: jgap
   integer                         :: i
 
   jgap=ichar('a')-ichar('A')
 
-  do i=1,len_trim(line)
-    if (line(i:i) <= 'Z') then
-      if (line(i:i) >= 'A') line(i:i)=char(ichar(line(i:i))+jgap)
+  do i=1,len_trim(string)
+    if (string(i:i) <= 'Z') then
+      if (string(i:i) >= 'A') string(i:i)=char(ichar(string(i:i))+jgap)
     endif
   enddo
 
