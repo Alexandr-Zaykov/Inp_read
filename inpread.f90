@@ -103,8 +103,102 @@ Module input
     END subroutine logic_throw_error
 END Module input
 
+module pipes
+
+use,intrinsic :: iso_c_binding
+
+implicit none
+
+private
+! Pipes module from DEGENERATE CONIC – https://degenerateconic.com/fortran-c-interoperability.html
+! Cheers!
+interface
+
+    function popen(command, mode) bind(C,name='popen')
+    import :: c_char, c_ptr
+    character(kind=c_char),dimension(*) :: command
+    character(kind=c_char),dimension(*) :: mode
+    type(c_ptr) :: popen
+    end function popen
+
+    function fgets(s, siz, stream) bind(C,name='fgets')
+    import :: c_char, c_ptr, c_int
+    type (c_ptr) :: fgets
+    character(kind=c_char),dimension(*) :: s
+    integer(kind=c_int),value :: siz
+    type(c_ptr),value :: stream
+    end function fgets
+
+    function pclose(stream) bind(C,name='pclose')
+    import :: c_ptr, c_int
+    integer(c_int) :: pclose
+    type(c_ptr),value :: stream
+    end function pclose
+
+end interface
+
+public :: c2f_string, get_command_as_string
+
+contains
+
+!**********************************************
+! convert a C string to a Fortran string
+!**********************************************
+function c2f_string(c) result(f)
+
+    implicit none
+
+    character(len=*),intent(in) :: c
+    character(len=:),allocatable :: f
+
+    integer :: i
+
+    i = index(c,c_null_char)
+
+    if (i<=0) then
+        f = c
+    else if (i==1) then
+        f = ''
+    else if (i>1) then
+        f = c(1:i-1)
+    end if
+
+end function c2f_string
+
+!**********************************************
+! return the result of the command as a string
+!**********************************************
+function get_command_as_string(command) result(str)
+
+    implicit none
+
+    character(len=*),intent(in) :: command
+    character(len=:),allocatable :: str
+
+    integer,parameter :: buffer_length = 1000
+
+    type(c_ptr) :: h
+    integer(c_int) :: istat
+    character(kind=c_char,len=buffer_length) :: line
+
+    str = ''
+    h = c_null_ptr
+    h = popen(command//c_null_char,'r'//c_null_char)
+
+    if (c_associated(h)) then
+        do while (c_associated(fgets(line,buffer_length,h)))
+            str = str//c2f_string(line)
+        end do
+        istat = pclose(h)
+    end if
+
+end function get_command_as_string
+
+end module pipes
+
 Program InpRead
   use functions
+  use pipes
   use input
   use molecules
   use mod_table
@@ -121,8 +215,9 @@ Program InpRead
   character(len=120)                              :: line
   character(len=1),dimension(3)                   :: axis_letter 
   character(len=1),dimension(4)                   :: state_letter
-  character(len=1),allocatable                    :: allowed_ends(:)
   character(len=4),dimension(5)                   :: allowed_types
+  character(len=1),allocatable                    :: allowed_ends(:)
+  character(len=:),allocatable                    :: sys_message
 
   type(input_logic)                               :: basis_logic,flags_logic,inp_logic
   type(input_logic),allocatable                   :: geom_logic(:),trro_logic(:),energy_logic(:)
@@ -135,7 +230,18 @@ Program InpRead
   state_letter = (/'s','t','c','a'/)
   axis_letter = (/'x','y','z'/)
 
-  inpfile = 'test.inp' !this will be read
+
+  PRINT '(t20,a)',"╭━━━┳━━━┳━━━┳━━━┳━━━╮" 
+  PRINT '(t20,a)',"┃╭━╮┃╭━╮┃╭━╮┃╭━╮┃╭━╮┃" 
+  PRINT '(t20,a)',"┃╰━━┫╰━╯┃┃╱┃┃╰━╯┃┃╱╰╯"
+  PRINT '(t20,a)',"╰━━╮┃╭━━┫╰━╯┃╭╮╭┫┃╱╭╮"
+  PRINT '(t20,a)',"┃╰━╯┃┃╱╱┃╭━╮┃┃┃╰┫╰━╯┃"
+  PRINT '(t20,a)',"╰━━━┻╯╱╱╰╯╱╰┻╯╰━┻━━━╯"
+  i = IARGC()
+  IF (i .lt. 1) GOTO 8 ! Error handling of more than one input?
+  CALL GETARG(1,inpfile)
+
+! inpfile = 'test.inp' !this will be read
   inp_logic%name=inpfile
   inp_logic%is_critical=.TRUE.
   basis_logic%name='Basis set definition'
@@ -144,7 +250,7 @@ Program InpRead
   flags_logic%location=inpfile
   basis_logic%is_critical=.TRUE.
   
-  OPEN(3,file=inpfile,status='old',err=8)
+  OPEN(3,file=inpfile,status='old',err=80)
 
   DO WHILE(.NOT.(flags_logic%is_present))
     READ(3,'(a)',end=1) line
@@ -352,25 +458,29 @@ Program InpRead
   GOTO 9
 
 ! ERROR BLOCK
-8   call inp_logic%throw_error() 
+8   PRINT*, 'Missing input file specification. Usage: SPARC ', '"','input name','"'
+    sys_message=get_command_as_string('ls *.inp')
+    PRINT *, 'Input (.inp) files in the directory: '//achar(13)//achar(10),sys_message
+    CALL EXIT(1)
+80  CALL inp_logic%throw_error() 
 81  geom_logic(i)%is_present=.FALSE.
     geom_logic(i)%location=line(1:len_trim(line))
-    call geom_logic(i)%throw_error("File not found!")
+    CALL geom_logic(i)%throw_error("File not found!")
 82  geom_logic(i)%is_present=.FALSE.
     geom_logic(i)%location=line(1:len_trim(line))
-    call geom_logic(i)%throw_error("Is the xyz format correct?")
+    CALL geom_logic(i)%throw_error("Is the xyz format correct?")
 83  energy_logic((i-1)*4+j)%is_present=.FALSE.
     energy_logic((i-1)*4+j)%is_critical=.TRUE.
     energy_logic((i-1)*4+j)%location=line(start_position:end_position)
-    call energy_logic((i-1)*4+j)%throw_error("Is the energy format correct?")
+    CALL energy_logic((i-1)*4+j)%throw_error("Is the energy format correct?")
 84  flags_logic%is_present=.FALSE.
     flags_logic%is_critical=.TRUE.
     flags_logic%location=line(1:end_position)
-    call flags_logic%throw_error("Not a known calculation flag!")
+    CALL flags_logic%throw_error("Not a known calculation flag!")
 85  trro_logic(k)%is_present=.FALSE.
     trro_logic(k)%is_critical=.TRUE.
     trro_logic(k)%location=line(start_position:end_position)
-    call trro_logic(k)%throw_error("Is the format correct?")
+    CALL trro_logic(k)%throw_error("Is the format correct?")
  
 9 CONTINUE  
 End Program InpRead
