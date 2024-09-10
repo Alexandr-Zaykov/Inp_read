@@ -116,7 +116,7 @@ Program InpRead
   character(len=2)                                :: element
   character(len=5)                                :: type
   character(len=6)                                :: signal
-  character(len=8)                                :: inpfile
+  character(len=8)                                :: inpfile ! This will be changed last
   character(len=10)                               :: tmp
   character(len=120)                              :: line
   character(len=1),dimension(3)                   :: axis_letter 
@@ -265,18 +265,28 @@ Program InpRead
     i=FINDLOC(allowed_ends,type(5:5),dim=1)
     
     DO j=1,3
-      trro_logic((i-2)*n_molecules+j)%is_present=.TRUE.
-      trro_logic((i-2)*n_molecules+j+3*(n_molecules-1))%is_present=.TRUE.
+      k=(i-2)*n_molecules+j
+      trro_logic(k)%is_present=.TRUE.
 
       start_position=INDEX(line,'t'//axis_letter(j))+3
-      IF(start_position.eq.3) trro_logic((i-2)*n_molecules+j)%is_present=.FALSE.
+      IF(start_position.eq.3) THEN
+        trro_logic(k)%is_present=.FALSE.
+        CYCLE
+      ENDIF
       end_position=check_end(line,start_position)+start_position-2
     ! READ T data here
-    
+      READ(line(start_position:end_position),*,err=85) molecule(i)%Tr(j)
+      
+      k=k+3*(n_molecules-1)
+      trro_logic(k)%is_present=.TRUE.
       start_position=INDEX(line,'r'//axis_letter(j))+3
-      IF(start_position.eq.3) trro_logic((i-2)*n_molecules+j+3*(n_molecules-1))%is_present=.FALSE.
+      IF(start_position.eq.3) THEN
+        trro_logic(k)%is_present=.FALSE.
+        CYCLE
+      ENDIF
       end_position=check_end(line,start_position)+start_position-2
     ! READ R data here
+      READ(line(start_position:end_position),*,err=85) molecule(i)%Ro(j)
 
     ENDDO
 
@@ -357,6 +367,10 @@ Program InpRead
     flags_logic%is_critical=.TRUE.
     flags_logic%location=line(1:end_position)
     call flags_logic%throw_error("Not a known calculation flag!")
+85  trro_logic(k)%is_present=.FALSE.
+    trro_logic(k)%is_critical=.TRUE.
+    trro_logic(k)%location=line(start_position:end_position)
+    call trro_logic(k)%throw_error("Is the format correct?")
  
 9 CONTINUE  
 End Program InpRead
