@@ -1,4 +1,3 @@
-
 Module functions
   implicit none
 Contains
@@ -210,7 +209,6 @@ Program InpRead
   character(len=2)                                :: element
   character(len=5)                                :: type
   character(len=6)                                :: signal
-  character(len=8)                                :: inpfile ! This will be changed last
   character(len=10)                               :: tmp
   character(len=120)                              :: line
   character(len=1),dimension(3)                   :: axis_letter 
@@ -218,6 +216,7 @@ Program InpRead
   character(len=4),dimension(5)                   :: allowed_types
   character(len=1),allocatable                    :: allowed_ends(:)
   character(len=:),allocatable                    :: sys_message
+  character(len=:),allocatable                    :: inpfile
 
   type(input_logic)                               :: basis_logic,flags_logic,inp_logic
   type(input_logic),allocatable                   :: geom_logic(:),trro_logic(:),energy_logic(:)
@@ -237,9 +236,11 @@ Program InpRead
   PRINT '(t20,a)',"╰━━╮┃╭━━┫╰━╯┃╭╮╭┫┃╱╭╮"
   PRINT '(t20,a)',"┃╰━╯┃┃╱╱┃╭━╮┃┃┃╰┫╰━╯┃"
   PRINT '(t20,a)',"╰━━━┻╯╱╱╰╯╱╰┻╯╰━┻━━━╯"
-  i = IARGC()
-  IF (i .lt. 1) GOTO 8 ! Error handling of more than one input?
-  CALL GETARG(1,inpfile)
+  !i = COMMAND_ARGUMENT_COUNT() => Fortran 2003, instead of IARGC, error handling for more than a single input file?, flags?
+  CALL GET_COMMAND_ARGUMENT(1,LENGTH=i)
+  IF (i .lt. 1) GOTO 8
+  ALLOCATE(character(i) :: inpfile)
+  CALL GET_COMMAND_ARGUMENT(1,VALUE=inpfile)
 
 ! inpfile = 'test.inp' !this will be read
   inp_logic%name=inpfile
@@ -380,7 +381,6 @@ Program InpRead
         CYCLE
       ENDIF
       end_position=check_end(line,start_position)+start_position-2
-    ! READ T data here
       READ(line(start_position:end_position),*,err=85) molecule(i)%Tr(j)
       
       k=k+3*(n_molecules-1)
@@ -391,7 +391,6 @@ Program InpRead
         CYCLE
       ENDIF
       end_position=check_end(line,start_position)+start_position-2
-    ! READ R data here
       READ(line(start_position:end_position),*,err=85) molecule(i)%Ro(j)
 
     ENDDO
