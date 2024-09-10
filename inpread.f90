@@ -26,6 +26,7 @@ END Function uppercase
 END Module functions
 
 Module molecules
+  use functions
   implicit none
   
   Type xyz_data
@@ -44,10 +45,31 @@ Module molecules
     real*8                                        :: Tr(3)=0.0d0,Ro(3)=0.0d0
     real*8                                        :: energy(4)=(/0.0d0,0.0d0,1.0d0,1.0d0/)
     type(xyz_data)                                :: xyz
+    Contains
+    procedure, public  :: show_geom => molecule_print_geometry 
 
   END Type molecule_attribs
 
   type(molecule_attribs),allocatable              :: molecule(:)
+
+  Contains
+  Subroutine molecule_print_geometry(this)
+    class(molecule_attribs), intent(in)          :: this
+    integer                                      :: i
+
+    PRINT*
+    PRINT*, "Molecule ", char(uppercase(this%specifier))
+    PRINT '(x,a,i6)', "Number of atoms: ", this%n_atoms
+    PRINT*, "Atomic coordinates [Å]:"
+    DO i=1,this%n_atoms
+      IF(len_trim(adjustl(this%xyz%atom(i))).eq.1) THEN
+        PRINT '(a,3f12.6)', this%xyz%atom(i), this%xyz%geom(1,i), this%xyz%geom(2,i), this%xyz%geom(3,i)
+        CYCLE
+      ENDIF
+      PRINT '(x,a,f11.6,2f12.6)', this%xyz%atom(i), this%xyz%geom(1,i), this%xyz%geom(2,i), this%xyz%geom(3,i)
+    ENDDO
+
+  END subroutine molecule_print_geometry
 
 
 END Module molecules
@@ -90,7 +112,7 @@ Program InpRead
 
   integer                                         :: start_position=0, end_position=0
   integer                                         :: n_molecules
-  integer                                         :: i,j,k,l 
+  integer                                         :: i,j,k,l ! i:molecules j:other specifiers (state/axis) k,l:misc; iff i used=>move it to l
   character(len=2)                                :: element
   character(len=5)                                :: type
   character(len=6)                                :: signal
@@ -309,6 +331,10 @@ Program InpRead
   CALL basis_logic%throw_error()
   DO i=1,SIZE(comment)
     PRINT'(x,2a)', "User comment:", comment(i)
+  ENDDO
+  
+  DO i=1,n_molecules
+    CALL molecule(i)%show_geom()
   ENDDO
 
 
