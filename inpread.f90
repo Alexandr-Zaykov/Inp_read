@@ -79,6 +79,10 @@ Module input
 
   character(len=10),allocatable                   :: flag(:)
   character(len=120),allocatable                  :: comment(:)
+  character(len=1),dimension(3),parameter         :: axis_letter=(/'x','y','z'/)
+  character(len=1),dimension(4),parameter         :: state_letter=(/'s','t','c','a'/)
+  character(len=4),dimension(5),parameter         :: allowed_types=(/'geom','ener','trro','basi','flag'/)
+  character(len=1),allocatable                    :: allowed_ends(:)
   Type input_logic
     logical                                       :: is_critical=.FALSE., is_present=.FALSE.
     character(len=40)                             :: name,location="the specified location"
@@ -86,6 +90,10 @@ Module input
     Contains
       procedure, public  :: throw_error => logic_throw_error 
   END type input_logic
+
+  type(input_logic)                               :: basis_logic,flags_logic,inp_logic
+  type(input_logic),allocatable                   :: geom_logic(:),trro_logic(:),energy_logic(:)
+
   Contains
     Subroutine logic_throw_error(this,assumption)
       class(input_logic), intent(inout)           :: this
@@ -204,32 +212,18 @@ Program InpRead
   implicit none
 
   integer                                         :: start_position=0, end_position=0
-  integer                                         :: n_molecules
-  integer                                         :: i,j,k,l ! i:molecules j:other specifiers (state/axis) k,l:misc; iff i used=>move it to l
+  integer                                         :: n_molecules=3   ! the goal is a trimer for now, and so it is a default value
+  integer                                         :: i=0,j=0,k=0,l=0 ! i:molecules j:other specifiers (state/axis) k,l:misc; iff i used=>move it to l
   character(len=2)                                :: element
   character(len=5)                                :: type
   character(len=6)                                :: signal
   character(len=10)                               :: tmp
   character(len=120)                              :: line
-  character(len=1),dimension(3)                   :: axis_letter 
-  character(len=1),dimension(4)                   :: state_letter
-  character(len=4),dimension(5)                   :: allowed_types
-  character(len=1),allocatable                    :: allowed_ends(:)
-  character(len=:),allocatable                    :: sys_message
-  character(len=:),allocatable                    :: inpfile
-
-  type(input_logic)                               :: basis_logic,flags_logic,inp_logic
-  type(input_logic),allocatable                   :: geom_logic(:),trro_logic(:),energy_logic(:)
-
+  character(len=:),allocatable                    :: sys_message,inpfile
+!=========================DEBUG===============================
   character(len=40)                               :: debug(3)
   character(len=1)                                :: char_debug
  
-  n_molecules=3
-  allowed_types = (/'geom','ener','trro','basi','flag'/)
-  state_letter = (/'s','t','c','a'/)
-  axis_letter = (/'x','y','z'/)
-
-
   PRINT '(t20,a)',"╭━━━┳━━━┳━━━┳━━━┳━━━╮" 
   PRINT '(t20,a)',"┃╭━╮┃╭━╮┃╭━╮┃╭━╮┃╭━╮┃" 
   PRINT '(t20,a)',"┃╰━━┫╰━╯┃┃╱┃┃╰━╯┃┃╱╰╯"
@@ -237,6 +231,7 @@ Program InpRead
   PRINT '(t20,a)',"┃╰━╯┃┃╱╱┃╭━╮┃┃┃╰┫╰━╯┃"
   PRINT '(t20,a)',"╰━━━┻╯╱╱╰╯╱╰┻╯╰━┻━━━╯"
   !i = COMMAND_ARGUMENT_COUNT() => Fortran 2003, instead of IARGC, error handling for more than a single input file?, flags?
+  ! GET_COMMAND_ARGUMENT does not allocate deferred type characters until the 2023 standard.  
   CALL GET_COMMAND_ARGUMENT(1,LENGTH=i)
   IF (i .lt. 1) GOTO 8
   ALLOCATE(character(i) :: inpfile)
@@ -256,7 +251,7 @@ Program InpRead
   DO WHILE(.NOT.(flags_logic%is_present))
     READ(3,'(a)',end=1) line
     line=ADJUSTL(line)
-    call tolower(line)
+    CALL tolower(line)
     IF (line(1:6).ne.'flags:') CYCLE
     end_position=INDEX(line,'dimer')
     IF(end_position.eq.0) CYCLE
@@ -411,7 +406,7 @@ Program InpRead
     flags_logic%is_present=.TRUE.
     DO WHILE(.TRUE.)
       WRITE(tmp,'(a)') line(1:end_position-1)  
-      IF(.NOT.(ANY(calc_flags.eq.tmp(1:i)))) GOTO 84
+      IF(.NOT.(ANY(calc_flags.eq.tmp(1:5)))) GOTO 84
       flag=[flag,tmp]
       line=ADJUSTL(line(end_position:120))
       end_position=check_end(line)
@@ -437,7 +432,7 @@ Program InpRead
   DO i=1,n_molecules-1
     DO j=1,3
       CALL trro_logic((i-1)*n_molecules+j)%throw_error("Assuming 0.0 Å!")
-      CALL trro_logic((i-1)*n_molecules+j+n_molecules)%throw_error("Assuming 0.0°!")
+      CALL trro_logic((i-1)*n_molecules+j+3*(n_molecules-1))%throw_error("Assuming 0.0°!")
     ENDDO
   ENDDO
   DO i=1,n_molecules
