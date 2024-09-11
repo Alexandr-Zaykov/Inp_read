@@ -85,7 +85,8 @@ Module input
   character(len=1),allocatable                    :: allowed_ends(:)
   Type input_logic
     logical                                       :: is_critical=.FALSE., is_present=.FALSE.
-    character(len=40)                             :: name,location="the specified location"
+    character(len=40)                             :: name
+    character(len=200)                            :: location="the specified location"
 
     Contains
       procedure, public  :: throw_error => logic_throw_error 
@@ -219,7 +220,7 @@ Program InpRead
   character(len=6)                                :: signal
   character(len=10)                               :: tmp
   character(len=120)                              :: line
-  character(len=:),allocatable                    :: sys_message,inpfile
+  character(len=:),allocatable                    :: sys_message,inpfile,basis_name,library_location,full_path
 !=========================DEBUG===============================
   character(len=40)                               :: debug(3)
   character(len=1)                                :: char_debug
@@ -395,8 +396,15 @@ Program InpRead
     end_position=check_end(line)
     IF(ANY((/0,1/).eq.end_position)) GOTO 2
     basis_logic%is_present=.TRUE.
-    line=ADJUSTL(line(1:end_position-1))
-    ! Read the basis_logic set here
+    basis_name=ADJUSTL(line(1:end_position-1))
+    i=len_trim(get_command_as_string('printenv | grep "SPARC_LIB" | cut -c11-'))
+    IF(i.eq.1) GOTO 86 ! curiously, this is not 0
+    ALLOCATE(character(len=i) :: library_location)
+    library_location=get_command_as_string('printenv | grep "SPARC_LIB" | cut -c11-')
+    full_path=library_location//'/basis_sets/'//basis_name
+    open(4,file=full_path,status='old',err=87)
+    
+    
 
   CASE ('flag')
     IF ('s'.ne.type(5:5)) GOTO 2
@@ -475,6 +483,16 @@ Program InpRead
     trro_logic(k)%is_critical=.TRUE.
     trro_logic(k)%location=line(start_position:end_position)
     CALL trro_logic(k)%throw_error("Is the format correct?")
+86  basis_logic%is_present=.FALSE.
+    basis_logic%name="Basis set library location"
+    basis_logic%location="'$SPARC_LIB'"
+    CALL basis_logic%throw_error("Please, EXPORT it to the location of the SPARC installation.")
+87  basis_logic%is_present=.FALSE.
+    basis_logic%name=basis_name
+    basis_logic%location=full_path
+    CALL basis_logic%throw_error("You may add custom basis sets in Psi3 (SPDF uncontracted) format there."//achar(13)//achar(10)//&
+    &" List of currently available ones:"//achar(13)//achar(10)//&
+    &get_command_as_string('ls "$SPARC_LIB/basis_sets/"'))
  
 9 CONTINUE  
 End Program InpRead
