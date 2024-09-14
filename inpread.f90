@@ -1,33 +1,9 @@
-Module functions
-  implicit none
-Contains
-Function check_end(line,start) Result(end_char)
-  character(len=120),intent(in)                   :: line
-  character(len=120)                              :: input
-  integer,intent(in),optional                     :: start
-  integer                                         :: end_char
- 
-  input=ADJUSTL(line)
-  IF(present(start)) input=ADJUSTL(line(start:120))
-  
-  end_char=INDEX(input,' ')
-  IF((end_char.eq.0).OR.(end_char.gt.INDEX(input,';')).AND.(INDEX(input,';').gt.0)) end_char=INDEX(input,';')
-
-  RETURN
-END Function check_end
-Function uppercase(input) result(output)
-  character(len=1)                                :: input
-  integer                                         :: output
-
-  output=ichar(input)-ichar('a')+ichar('A')
-
-END Function uppercase
-END Module functions
-
 Module molecules
   use functions
   implicit none
-  
+ 
+  integer                                         :: n_molecules=3   ! the goal is a trimer for now, and so it is a default value
+  character(len=10),allocatable                   :: flag(:)
   Type xyz_data
     character(len=2),allocatable                  :: atom(:)
     real*8,allocatable                            :: geom(:,:)
@@ -62,10 +38,10 @@ Module molecules
     PRINT*, "Atomic coordinates [Å]:"
     DO i=1,this%n_atoms
       IF(len_trim(adjustl(this%xyz%atom(i))).eq.1) THEN
-        PRINT '(a,3f12.6)', this%xyz%atom(i), this%xyz%geom(1,i), this%xyz%geom(2,i), this%xyz%geom(3,i)
+        PRINT '(a,3f12.6)', this%xyz%atom(i), this%xyz%geom(i,1), this%xyz%geom(i,2), this%xyz%geom(i,3)
         CYCLE
       ENDIF
-      PRINT '(x,a,f11.6,2f12.6)', this%xyz%atom(i), this%xyz%geom(1,i), this%xyz%geom(2,i), this%xyz%geom(3,i)
+      PRINT '(x,a,f11.6,2f12.6)', this%xyz%atom(i), this%xyz%geom(i,1), this%xyz%geom(i,2), this%xyz%geom(i,3)
     ENDDO
 
   END subroutine molecule_print_geometry
@@ -77,7 +53,6 @@ END Module molecules
 Module input
   implicit none
 
-  character(len=10),allocatable                   :: flag(:)
   character(len=120),allocatable                  :: comment(:)
   character(len=1),dimension(3),parameter         :: axis_letter=(/'x','y','z'/)
   character(len=1),dimension(4),parameter         :: state_letter=(/'s','t','c','a'/)
@@ -111,7 +86,7 @@ Module input
     END subroutine logic_throw_error
 END Module input
 
-module pipes
+Module pipes
 
 use,intrinsic :: iso_c_binding
 
@@ -202,7 +177,7 @@ function get_command_as_string(command) result(str)
 
 end function get_command_as_string
 
-end module pipes
+END Module pipes
 
 Program InpRead
   use functions
@@ -210,10 +185,10 @@ Program InpRead
   use input
   use molecules
   use mod_table
+  use mod_basis
   implicit none
 
   integer                                         :: start_position=0, end_position=0
-  integer                                         :: n_molecules=3   ! the goal is a trimer for now, and so it is a default value
   integer                                         :: i=0,j=0,k=0,l=0 ! i:molecules j:other specifiers (state/axis) k,l:misc; iff i used=>move it to l
   character(len=2)                                :: element
   character(len=5)                                :: type
@@ -233,10 +208,10 @@ Program InpRead
   PRINT '(t20,a)',"╰━━━┻╯╱╱╰╯╱╰┻╯╰━┻━━━╯"
   !i = COMMAND_ARGUMENT_COUNT() => Fortran 2003, instead of IARGC, error handling for more than a single input file?, flags?
   ! GET_COMMAND_ARGUMENT does not allocate deferred type characters until the 2023 standard.  
-  CALL GET_COMMAND_ARGUMENT(1,LENGTH=i)
+  CALL GET_COMMAND_ARGUMENT(1,length=i)
   IF (i .lt. 1) GOTO 8
   ALLOCATE(character(i) :: inpfile)
-  CALL GET_COMMAND_ARGUMENT(1,VALUE=inpfile)
+  CALL GET_COMMAND_ARGUMENT(1,value=inpfile)
 
 ! inpfile = 'test.inp' !this will be read
   inp_logic%name=inpfile
@@ -254,6 +229,7 @@ Program InpRead
     line=ADJUSTL(line)
     CALL tolower(line)
     IF (line(1:6).ne.'flags:') CYCLE
+    ! THIS WILL NEED TO BE EXPANDED n=2,3,4,...
     end_position=INDEX(line,'dimer')
     IF(end_position.eq.0) CYCLE
     flags_logic%is_present=.TRUE.
@@ -329,7 +305,7 @@ Program InpRead
     OPEN(j,file=line,status='old',err=81)
     READ(j,'(i5)',err=82) molecule(i)%n_atoms
     IF(molecule(i)%n_atoms.eq.0) GOTO 82
-    ALLOCATE(molecule(i)%xyz%atom(molecule(i)%n_atoms),molecule(i)%xyz%geom(3,molecule(i)%n_atoms))
+    ALLOCATE(molecule(i)%xyz%atom(molecule(i)%n_atoms),molecule(i)%xyz%geom(molecule(i)%n_atoms,3))
     READ(j,'(i5)',err=82)
     DO k=1,molecule(i)%n_atoms
       READ(j,'(a2)',end=82,advance='no') molecule(i)%xyz%atom(k)
@@ -340,8 +316,8 @@ Program InpRead
       DO l=1,3
         line=ADJUSTL(line)
         end_position=check_end(line)
-        READ(line(1:end_position),*,err=82,end=82) molecule(i)%xyz%geom(l,k)
-        line=ADJUSTL(line(1:end_position))
+        READ(line(1:end_position),*,err=82,end=82) molecule(i)%xyz%geom(k,l)
+        line=ADJUSTL(line(end_position:120))
       ENDDO
     ENDDO
 
@@ -401,8 +377,14 @@ Program InpRead
     IF(i.eq.1) GOTO 86 ! curiously, this is not 0
     ALLOCATE(character(len=i) :: library_location)
     library_location=get_command_as_string('printenv | grep "SPARC_LIB" | cut -c11-')
-    full_path=library_location//'/basis_sets/'//basis_name
-    open(4,file=full_path,status='old',err=87)
+    ! i-1 as it contains a newline character
+    full_path=library_location(1:i-1)//'/basis_sets/'//basis_name
+    OPEN(4,file=full_path,status='old',err=87)
+    CALL parse_nbasis()
+    ALLOCATE(b_atom(MaxBasis), nShell(MaxBasis+1),&
+            &angular(MaxBasis, MaxShells), nprim(MaxBasis, MaxShells), ncontract(MaxBasis, MaxShells),&
+            &alpha(MaxBasis, MaxShells, MaxPrim), contract(MaxBasis, MaxShells, MaxPrim, MaxContract))
+    CALL parse_basis()
     
     
 
@@ -457,6 +439,7 @@ Program InpRead
 
 
   CLOSE(3)
+  CLOSE(4)
   GOTO 9
 
 ! ERROR BLOCK
