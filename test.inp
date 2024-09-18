@@ -1,13 +1,13 @@
-GeomA: test.xyz      ;
-GeomB: test2.xyz ;
+GeomA: test2.xyz      ;
+GeomB: test.xyz ;
 GeomC: test3.xyz  ;
 TrRoB: TX=1.0 TY=2.0 TZ=3.0 RX=4.0 RZ=60.0 ;
 TrRoC: TX=1.0 TZ=3.0 TY=2.1 RX=4.0 RY=5.0 RZ=60.0;
 EnerA: C=  1.0 S=2.0 A=3.0;
 EnerB: T=4.0 S=5.0 C=6.0 A=7.0 ;
 EnerC: T=8.0 S=9.0 A=10.0 ;
-Basis: def2-SVP   ; 
+Basis: 6-31G   ; 
 Print: Ha! A comment!
-Flags:         ; 
+Flags: SP;
 ! Ha! Another comment!
 And yet another comment that is not printed!

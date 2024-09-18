@@ -7,6 +7,7 @@ Module molecules
   Type xyz_data
     character(len=2),allocatable                  :: atom(:)
     real*8,allocatable                            :: geom(:,:)
+    integer,allocatable                           :: nuc_charge(:)
     
   END Type xyz_data
 
@@ -58,6 +59,7 @@ Module input
   character(len=1),dimension(4),parameter         :: state_letter=(/'s','t','c','a'/)
   character(len=4),dimension(5),parameter         :: allowed_types=(/'geom','ener','trro','basi','flag'/)
   character(len=1),allocatable                    :: allowed_ends(:)
+
   Type input_logic
     logical                                       :: is_critical=.FALSE., is_present=.FALSE.
     character(len=40)                             :: name
@@ -199,6 +201,10 @@ Program InpRead
 !=========================DEBUG===============================
   character(len=40)                               :: debug(3)
   character(len=1)                                :: char_debug
+
+! NOTE:
+! I am trying to interweave OOP FORTRAN with the "standard" procedural FORTRAN.
+! OOP is great for its flexibility, but the procedural FORTRAN allows for nifty optimization.
  
   PRINT '(t20,a)',"╭━━━┳━━━┳━━━┳━━━┳━━━╮" 
   PRINT '(t20,a)',"┃╭━╮┃╭━╮┃╭━╮┃╭━╮┃╭━╮┃" 
@@ -240,7 +246,7 @@ Program InpRead
 1 CONTINUE    
   ALLOCATE(allowed_ends(n_molecules+1))
   DO i=97,96+n_molecules
-    ! a=97, z=122
+    ! a=97, z=122, allowed_ends=(/a,b,c,.../)
     allowed_ends(i-96)=char(i)
   ENDDO
   allowed_ends(n_molecules+1)='s'
@@ -305,18 +311,22 @@ Program InpRead
     OPEN(j,file=line,status='old',err=81)
     READ(j,'(i5)',err=82) molecule(i)%n_atoms
     IF(molecule(i)%n_atoms.eq.0) GOTO 82
-    ALLOCATE(molecule(i)%xyz%atom(molecule(i)%n_atoms),molecule(i)%xyz%geom(molecule(i)%n_atoms,3))
+    ALLOCATE(molecule(i)%xyz%atom(molecule(i)%n_atoms),molecule(i)%xyz%geom(molecule(i)%n_atoms,3),&
+            &molecule(i)%xyz%nuc_charge(molecule(i)%n_atoms))
     READ(j,'(i5)',err=82)
     DO k=1,molecule(i)%n_atoms
-      READ(j,'(a2)',end=82,advance='no') molecule(i)%xyz%atom(k)
-      element=ADJUSTR(molecule(i)%xyz%atom(k))
-      IF(FINDLOC(table,element,dim=1).eq.0) GOTO 82
       READ(j,'(a)',end=82) line 
+      line=ADJUSTL(line)
+      molecule(i)%xyz%atom(k)=line(1:2)
+      line=ADJUSTL(line(3:120))
+      element=ADJUSTR(molecule(i)%xyz%atom(k))
+      molecule(i)%xyz%nuc_charge(k)=FINDLOC(table,element,dim=1)
+      IF(molecule(i)%xyz%nuc_charge(k).eq.0) GOTO 82
     !SAVE
       DO l=1,3
         line=ADJUSTL(line)
         end_position=check_end(line)
-        READ(line(1:end_position),*,err=82,end=82) molecule(i)%xyz%geom(k,l)
+        READ(line(1:end_position),*,err=82,end=82) molecule(i)%xyz%geom(k,l) ! This is not optimal, but not worth -> geom(l,k)
         line=ADJUSTL(line(end_position:120))
       ENDDO
     ENDDO
@@ -385,7 +395,7 @@ Program InpRead
             &angular(MaxBasis, MaxShells), nprim(MaxBasis, MaxShells), ncontract(MaxBasis, MaxShells),&
             &alpha(MaxBasis, MaxShells, MaxPrim), contract(MaxBasis, MaxShells, MaxPrim, MaxContract))
     CALL parse_basis()
-    
+    CLOSE(4)
     
 
   CASE ('flag')
@@ -405,12 +415,14 @@ Program InpRead
     ENDDO
     
   END SELECT
-
   GOTO 2
+
 3 CONTINUE
-  ! CHECKING BLOCK
+  CLOSE(3)
+  ! CHECKING BLOCK/PRINTING BLOCK
   ! Check if the file contains the required data
   ! Throw errors (=> EXIT) after warnings
+  ! WARNINGS
   CALL flags_logic%throw_error("Assuming this is a SP calculation with a trimer!")
   DO i=1,n_molecules
     DO j=1,4
@@ -425,6 +437,9 @@ Program InpRead
       CALL trro_logic((i-1)*n_molecules+j+3*(n_molecules-1))%throw_error("Assuming 0.0°!")
     ENDDO
   ENDDO
+  ! ERRORS
+  CALL lib_struct()
+  CALL aostruct()
   DO i=1,n_molecules
     CALL geom_logic(i)%throw_error()
   ENDDO
@@ -438,8 +453,15 @@ Program InpRead
   ENDDO
 
 
-  CLOSE(3)
-  CLOSE(4)
+  
+  ! CALCULATION BLOCK
+  DO i=1,n_molecules
+    CALL molecule_param(i)
+    CALL nucrep
+    CALL alloc_mem
+    CALL dealloc_mem
+  ENDDO
+
   GOTO 9
 
 ! ERROR BLOCK
