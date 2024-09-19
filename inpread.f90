@@ -3,7 +3,7 @@ Module molecules
   implicit none
  
   integer                                         :: n_molecules=3   ! the goal is a trimer for now, and so it is a default value
-  character(len=10),allocatable                   :: flag(:)
+  character(len=5),allocatable                    :: flag(:)
   Type xyz_data
     character(len=2),allocatable                  :: atom(:)
     real*8,allocatable                            :: geom(:,:)
@@ -17,7 +17,7 @@ Module molecules
 
   Type molecule_attribs
     character(len=1)                              :: specifier
-    integer                                       :: n_atoms=0
+    integer                                       :: n_atoms=0, orb_rot(2)=0
     real*8                                        :: Tr(3)=0.0d0,Ro(3)=0.0d0
     real*8                                        :: energy(4)=(/0.0d0,0.0d0,1.0d0,1.0d0/)
     type(xyz_data)                                :: xyz
@@ -31,18 +31,20 @@ Module molecules
   Contains
   Subroutine molecule_print_geometry(this)
     class(molecule_attribs), intent(in)          :: this
-    integer                                      :: i
+    integer                                      :: i_priv
 
     PRINT*
     PRINT*, "Molecule ", char(uppercase(this%specifier))
     PRINT '(x,a,i6)', "Number of atoms: ", this%n_atoms
     PRINT*, "Atomic coordinates [Å]:"
-    DO i=1,this%n_atoms
-      IF(len_trim(adjustl(this%xyz%atom(i))).eq.1) THEN
-        PRINT '(a,3f12.6)', this%xyz%atom(i), this%xyz%geom(i,1), this%xyz%geom(i,2), this%xyz%geom(i,3)
+    DO i_priv=1,this%n_atoms
+      IF(len_trim(adjustl(this%xyz%atom(i_priv))).eq.1) THEN
+        PRINT '(x,a,3f12.6)', this%xyz%atom(i_priv), this%xyz%geom(i_priv,1),&
+                             &this%xyz%geom(i_priv,2), this%xyz%geom(i_priv,3)
         CYCLE
       ENDIF
-      PRINT '(x,a,f11.6,2f12.6)', this%xyz%atom(i), this%xyz%geom(i,1), this%xyz%geom(i,2), this%xyz%geom(i,3)
+      PRINT '(2x,a,f11.6,2f12.6)', this%xyz%atom(i_priv), this%xyz%geom(i_priv,1),&
+                                  &this%xyz%geom(i_priv,2), this%xyz%geom(i_priv,3)
     ENDDO
 
   END subroutine molecule_print_geometry
@@ -57,7 +59,7 @@ Module input
   character(len=120),allocatable                  :: comment(:)
   character(len=1),dimension(3),parameter         :: axis_letter=(/'x','y','z'/)
   character(len=1),dimension(4),parameter         :: state_letter=(/'s','t','c','a'/)
-  character(len=4),dimension(5),parameter         :: allowed_types=(/'geom','ener','trro','basi','flag'/)
+  character(len=4),dimension(6),parameter         :: allowed_types=(/'geom','ener','trro','basi','flag','reor'/)
   character(len=1),allocatable                    :: allowed_ends(:)
 
   Type input_logic
@@ -70,7 +72,7 @@ Module input
   END type input_logic
 
   type(input_logic)                               :: basis_logic,flags_logic,inp_logic
-  type(input_logic),allocatable                   :: geom_logic(:),trro_logic(:),energy_logic(:)
+  type(input_logic),allocatable                   :: geom_logic(:),trro_logic(:),energy_logic(:),orbrot_logic(:)
 
   Contains
     Subroutine logic_throw_error(this,assumption)
@@ -192,6 +194,7 @@ Program InpRead
 
   integer                                         :: start_position=0, end_position=0
   integer                                         :: i=0,j=0,k=0,l=0 ! i:molecules j:other specifiers (state/axis) k,l:misc; iff i used=>move it to l
+  real*8                                          :: time_start, time_end
   character(len=2)                                :: element
   character(len=5)                                :: type
   character(len=6)                                :: signal
@@ -199,8 +202,6 @@ Program InpRead
   character(len=120)                              :: line
   character(len=:),allocatable                    :: sys_message,inpfile,basis_name,library_location,full_path
 !=========================DEBUG===============================
-  character(len=40)                               :: debug(3)
-  character(len=1)                                :: char_debug
 
 ! NOTE:
 ! I am trying to interweave OOP FORTRAN with the "standard" procedural FORTRAN.
@@ -253,14 +254,18 @@ Program InpRead
 
   REWIND(3)
 
-  ALLOCATE(molecule(n_molecules),geom_logic(n_molecules),trro_logic(6*(n_molecules-1)),energy_logic(n_molecules*4))
+  ALLOCATE(molecule(n_molecules),geom_logic(n_molecules),orbrot_logic(n_molecules),&
+          &trro_logic(6*(n_molecules-1)),energy_logic(n_molecules*4))
   ! Important allocation. Must be 0 in length!
   ALLOCATE(comment(0),flag(0))
 
   DO i=1,n_molecules
-    geom_logic(i)%name='Geometry of '//char(uppercase(allowed_ends(i)))
+    geom_logic(i)%name='Geometry of molecule '//char(uppercase(allowed_ends(i)))
     geom_logic(i)%is_critical=.TRUE.
     geom_logic(i)%location=inpfile
+    orbrot_logic(i)%name='Orbital rotation of molecule '//char(uppercase(allowed_ends(i)))
+    orbrot_logic(i)%is_critical=.FALSE.
+    orbrot_logic(i)%location=inpfile
     molecule(i)%specifier=allowed_ends(i)
     DO j=1,4
       energy_logic((i-1)*4+j)%name=char(uppercase(state_letter(j)))//' energy of '//char(uppercase(allowed_ends(i)))
@@ -313,6 +318,7 @@ Program InpRead
     IF(molecule(i)%n_atoms.eq.0) GOTO 82
     ALLOCATE(molecule(i)%xyz%atom(molecule(i)%n_atoms),molecule(i)%xyz%geom(molecule(i)%n_atoms,3),&
             &molecule(i)%xyz%nuc_charge(molecule(i)%n_atoms))
+    molecule(i)%xyz%geom=0.0d0
     READ(j,'(i5)',err=82)
     DO k=1,molecule(i)%n_atoms
       READ(j,'(a)',end=82) line 
@@ -326,7 +332,7 @@ Program InpRead
       DO l=1,3
         line=ADJUSTL(line)
         end_position=check_end(line)
-        READ(line(1:end_position),*,err=82,end=82) molecule(i)%xyz%geom(k,l) ! This is not optimal, but not worth -> geom(l,k)
+        READ(line(1:end_position-1),*,err=82,end=82) molecule(i)%xyz%geom(k,l) ! This is not optimal, but not worth -> geom(l,k)
         line=ADJUSTL(line(end_position:120))
       ENDDO
     ENDDO
@@ -413,6 +419,17 @@ Program InpRead
       IF(11.lt.end_position) GOTO 84
       IF(ANY((/0,1/).eq.end_position)) GOTO 2
     ENDDO
+
+  CASE ('reor')
+    IF (.NOT.(ANY(allowed_ends(1:SIZE(allowed_ends)-1).eq.type(5:5)))) GOTO 2
+    i=FINDLOC(allowed_ends(1:SIZE(allowed_ends)-1),type(5:5),dim=1)
+
+    orbrot_logic(i)%is_present=.TRUE.
+    DO j=1,2
+      end_position=check_end(line) 
+      READ(line(1:end_position-1),*,end=88,err=88) molecule(i)%orb_rot(j)
+      line=ADJUSTL(line(end_position:120))
+    ENDDO
     
   END SELECT
   GOTO 2
@@ -452,15 +469,17 @@ Program InpRead
     CALL molecule(i)%show_geom()
   ENDDO
 
-
-  
   ! CALCULATION BLOCK
+  CALL CPU_TIME(time_start)
   DO i=1,n_molecules
     CALL molecule_param(i)
     CALL nucrep
     CALL alloc_mem
-    CALL dealloc_mem
+    CALL scf(i)
+    CALL dealloc_mem(i)
   ENDDO
+  CALL CPU_TIME(time_end)
+  PRINT '(36x,a,f14.2,a)', "*CPU time elapsed (total): ", time_end-time_start, " s"
 
   GOTO 9
 
@@ -498,6 +517,10 @@ Program InpRead
     CALL basis_logic%throw_error("You may add custom basis sets in Psi3 (SPDF uncontracted) format there."//achar(13)//achar(10)//&
     &" List of currently available ones:"//achar(13)//achar(10)//&
     &get_command_as_string('ls "$SPARC_LIB/basis_sets/"'))
+88  orbrot_logic(i)%is_present=.FALSE.
+    orbrot_logic(i)%is_critical=.TRUE.
+    orbrot_logic(i)%location=line(1:len_trim(line))
+    CALL orbrot_logic(i)%throw_error("Is the format (integer) correct?")
  
 9 CONTINUE  
 End Program InpRead
