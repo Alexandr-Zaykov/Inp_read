@@ -2,8 +2,10 @@ Module molecules
   use functions
   implicit none
  
-  integer                                         :: n_molecules=3   ! the goal is a trimer for now, and so it is a default value
   character(len=5),allocatable                    :: flag(:)
+  integer                                         :: n_molecules=3   ! the goal is a trimer for now, and so it is a default value
+  real*8                                          :: lamda=0.2 ! eV
+
   Type xyz_data
     character(len=2),allocatable                  :: atom(:)
     real*8,allocatable                            :: geom(:,:)
@@ -59,7 +61,7 @@ Module input
   character(len=120),allocatable                  :: comment(:)
   character(len=1),dimension(3),parameter         :: axis_letter=(/'x','y','z'/)
   character(len=1),dimension(4),parameter         :: state_letter=(/'s','t','c','a'/)
-  character(len=4),dimension(6),parameter         :: allowed_types=(/'geom','ener','trro','basi','flag','reor'/)
+  character(len=4),dimension(7),parameter         :: allowed_types=(/'geom','ener','trro','basi','flag','reor','lamd'/)
   character(len=1),allocatable                    :: allowed_ends(:)
 
   Type input_logic
@@ -71,7 +73,7 @@ Module input
       procedure, public  :: throw_error => logic_throw_error 
   END type input_logic
 
-  type(input_logic)                               :: basis_logic,flags_logic,inp_logic
+  type(input_logic)                               :: basis_logic,flags_logic,inp_logic,lamda_logic
   type(input_logic),allocatable                   :: geom_logic(:),trro_logic(:),energy_logic(:),orbrot_logic(:)
 
   Contains
@@ -192,7 +194,7 @@ Program InpRead
   use mod_basis
   implicit none
 
-  integer                                         :: start_position=0, end_position=0
+  integer                                         :: start_position=0, end_position=0, line_num=0
   integer                                         :: i=0,j=0,k=0,l=0 ! i:molecules j:other specifiers (state/axis) k,l:misc; iff i used=>move it to l
   real*8                                          :: time_start, time_end
   character(len=2)                                :: element
@@ -222,12 +224,15 @@ Program InpRead
 
 ! inpfile = 'test.inp' !this will be read
   inp_logic%name=inpfile
-  inp_logic%is_critical=.TRUE.
   basis_logic%name='Basis set definition'
-  basis_logic%location=inpfile
   flags_logic%name='Calculation definition'
+  lamda_logic%name='Reorganization energy value'
+  basis_logic%location=inpfile
   flags_logic%location=inpfile
+  lamda_logic%location=inpfile
   basis_logic%is_critical=.TRUE.
+  inp_logic%is_critical=.TRUE.
+  ! lambda is not critical, defaults (0.2 eV) initialized in "molecules" module
   
   OPEN(3,file=inpfile,status='old',err=80)
 
@@ -285,6 +290,7 @@ Program InpRead
   ! READING BLOCK
   ! Prunes the comments from other stuff, sets types.
 2 READ(3,'(a)',end=3) line
+  line_num=line_num+1
   line=ADJUSTL(line)
   signal=line(1:6)
   CALL tolower(signal)
@@ -299,6 +305,7 @@ Program InpRead
   CALL tolower(line)
   type=signal(1:5)
   end_position=INDEX(line,';')
+  IF(end_position.eq.0) GOTO 810
   line=ADJUSTL(line(7:end_position))
 
   ! PROCESSING BLOCK
@@ -361,25 +368,21 @@ Program InpRead
     
     DO j=1,3
       k=(i-2)*n_molecules+j
-      trro_logic(k)%is_present=.TRUE.
 
       start_position=INDEX(line,'t'//axis_letter(j))+3
-      IF(start_position.eq.3) THEN
-        trro_logic(k)%is_present=.FALSE.
-        CYCLE
+      IF(start_position.ne.3) THEN
+        trro_logic(k)%is_present=.TRUE.
+        end_position=check_end(line,start_position)+start_position-2
+        READ(line(start_position:end_position),*,err=85) molecule(i)%Tr(j)
       ENDIF
-      end_position=check_end(line,start_position)+start_position-2
-      READ(line(start_position:end_position),*,err=85) molecule(i)%Tr(j)
       
       k=k+3*(n_molecules-1)
-      trro_logic(k)%is_present=.TRUE.
       start_position=INDEX(line,'r'//axis_letter(j))+3
-      IF(start_position.eq.3) THEN
-        trro_logic(k)%is_present=.FALSE.
-        CYCLE
+      IF(start_position.ne.3) THEN
+        trro_logic(k)%is_present=.TRUE.
+        end_position=check_end(line,start_position)+start_position-2
+        READ(line(start_position:end_position),*,err=85) molecule(i)%Ro(j)
       ENDIF
-      end_position=check_end(line,start_position)+start_position-2
-      READ(line(start_position:end_position),*,err=85) molecule(i)%Ro(j)
 
     ENDDO
 
@@ -425,11 +428,26 @@ Program InpRead
     i=FINDLOC(allowed_ends(1:SIZE(allowed_ends)-1),type(5:5),dim=1)
 
     orbrot_logic(i)%is_present=.TRUE.
+    end_position=check_end(line) 
+    IF(ANY((/0,1/).eq.end_position)) GOTO 88
+
     DO j=1,2
-      end_position=check_end(line) 
       READ(line(1:end_position-1),*,end=88,err=88) molecule(i)%orb_rot(j)
       line=ADJUSTL(line(end_position:120))
+      end_position=check_end(line) 
     ENDDO
+  
+  CASE ('lamd')
+    IF ('a'.ne.type(5:5)) GOTO 2
+    ! THIS IS AN INJECTION POINT FOR DIFFERENT LAMDAS, USE FINDLOC TO DEFINE LAMDA, LAMDB, LAMDC,...
+    
+    lamda_logic%is_present=.TRUE.
+    end_position=check_end(line)
+    IF(ANY((/0,1/).eq.end_position)) GOTO 89
+    READ(line(1:end_position-1),*,err=89) lamda
+    
+
+
     
   END SELECT
   GOTO 2
@@ -448,10 +466,14 @@ Program InpRead
       CALL energy_logic((i-1)*4+j)%throw_error("Using the default value ("//line(1:4)//" eV)!")
     ENDDO
   ENDDO
-  DO i=1,n_molecules-1
+  DO i=2,n_molecules
     DO j=1,3
-      CALL trro_logic((i-1)*n_molecules+j)%throw_error("Assuming 0.0 Å!")
-      CALL trro_logic((i-1)*n_molecules+j+3*(n_molecules-1))%throw_error("Assuming 0.0°!")
+      WRITE(line,'(f4.1)') molecule(i)%Tr(j)
+      line=ADJUSTL(line)
+      CALL trro_logic((i-2)*n_molecules+j)%throw_error("Default value: "//line(1:LEN_TRIM(line))//" Å!")
+      WRITE(line,'(f4.1)') molecule(i)%Ro(j)
+      line=ADJUSTL(line)
+      CALL trro_logic((i-2)*n_molecules+j+3*(n_molecules-1))%throw_error("Default value: "//line(1:LEN_TRIM(line))//"°!")
     ENDDO
   ENDDO
   ! ERRORS
@@ -521,7 +543,16 @@ Program InpRead
     orbrot_logic(i)%is_critical=.TRUE.
     orbrot_logic(i)%location=line(1:len_trim(line))
     CALL orbrot_logic(i)%throw_error("Is the format (integer) correct?")
- 
+89  lamda_logic%is_present=.FALSE.
+    lamda_logic%is_critical=.TRUE.
+    lamda_logic%location=line(1:end_position)
+    CALL lamda_logic%throw_error("Is the format (real) correct?")
+
+
+810 PRINT '(x,a,i4,3a)', "Error: Line number", line_num, " (",line(1:LEN_TRIM(line)),") is missing the ending ';'. Add it after the data input."
+    CALL EXIT(1)
+
+
 9 CONTINUE  
 End Program InpRead
 
