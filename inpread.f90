@@ -36,7 +36,7 @@ Module molecules
     integer                                      :: i_priv
 
     PRINT*
-    PRINT*, "Molecule ", char(uppercase(this%specifier))
+    PRINT*, "Molecule ", uppercase(this%specifier) 
     PRINT '(x,a,i6)', "Number of atoms: ", this%n_atoms
     PRINT*, "Atomic coordinates [Å]:"
     DO i_priv=1,this%n_atoms
@@ -66,7 +66,7 @@ Module input
 
   Type input_logic
     logical                                       :: is_critical=.FALSE., is_present=.FALSE.
-    character(len=40)                             :: name
+    character(len=40)                             :: name="A thing"
     character(len=200)                            :: location="the specified location"
 
     Contains
@@ -194,7 +194,7 @@ Program InpRead
   use mod_basis
   implicit none
 
-  integer                                         :: start_position=0, end_position=0, line_num=0
+  integer                                         :: start_position=0, end_position=0, line_num=0, num_com=0, num_flg=0
   integer                                         :: i=0,j=0,k=0,l=0 ! i:molecules j:other specifiers (state/axis) k,l:misc; iff i used=>move it to l
   real*8                                          :: time_start, time_end
   character(len=2)                                :: element
@@ -222,7 +222,9 @@ Program InpRead
   ALLOCATE(character(i) :: inpfile)
   CALL GET_COMMAND_ARGUMENT(1,value=inpfile)
 
-! inpfile = 'test.inp' !this will be read
+! INITIALIZE
+  basis_name='NONE'
+  full_path='NONE'
   inp_logic%name=inpfile
   basis_logic%name='Basis set definition'
   flags_logic%name='Calculation definition'
@@ -244,7 +246,6 @@ Program InpRead
     ! THIS WILL NEED TO BE EXPANDED n=2,3,4,...
     end_position=INDEX(line,'dimer')
     IF(end_position.eq.0) CYCLE
-    flags_logic%is_present=.TRUE.
     n_molecules=2
     EXIT
   ENDDO
@@ -261,26 +262,24 @@ Program InpRead
 
   ALLOCATE(molecule(n_molecules),geom_logic(n_molecules),orbrot_logic(n_molecules),&
           &trro_logic(6*(n_molecules-1)),energy_logic(n_molecules*4))
-  ! Important allocation. Must be 0 in length!
-  ALLOCATE(comment(0),flag(0))
 
   DO i=1,n_molecules
-    geom_logic(i)%name='Geometry of molecule '//char(uppercase(allowed_ends(i)))
+    geom_logic(i)%name='Geometry of molecule '//uppercase(allowed_ends(i)) 
     geom_logic(i)%is_critical=.TRUE.
     geom_logic(i)%location=inpfile
-    orbrot_logic(i)%name='Orbital rotation of molecule '//char(uppercase(allowed_ends(i)))
+    orbrot_logic(i)%name='Orbital rotation of molecule '//uppercase(allowed_ends(i)) 
     orbrot_logic(i)%is_critical=.FALSE.
     orbrot_logic(i)%location=inpfile
     molecule(i)%specifier=allowed_ends(i)
     DO j=1,4
-      energy_logic((i-1)*4+j)%name=char(uppercase(state_letter(j)))//' energy of '//char(uppercase(allowed_ends(i)))
+      energy_logic((i-1)*4+j)%name=uppercase(state_letter(j))//' energy of '//uppercase(allowed_ends(i))
       energy_logic((i-1)*4+j)%location=inpfile
     ENDDO    
   ENDDO
   DO i=1,n_molecules-1
    DO j=1,3
-      trro_logic((i-1)*n_molecules+j)%name=  'T'//axis_letter(j)//' of '//char(uppercase(allowed_ends(i+1)))
-      trro_logic((i-1)*n_molecules+j+3*(n_molecules-1))%name='R'//axis_letter(j)//' of '//char(uppercase(allowed_ends(i+1)))
+      trro_logic((i-1)*n_molecules+j)%name=  'T'//axis_letter(j)//' of '//uppercase(allowed_ends(i+1))
+      trro_logic((i-1)*n_molecules+j+3*(n_molecules-1))%name='R'//axis_letter(j)//' of '//uppercase(allowed_ends(i+1))
       trro_logic((i-1)*n_molecules+j)%location=inpfile
       trro_logic((i-1)*n_molecules+j+3*(n_molecules-1))%location=inpfile
     ENDDO
@@ -295,10 +294,12 @@ Program InpRead
   signal=line(1:6)
   CALL tolower(signal)
   IF ((signal.eq.'print:').OR.(signal(1:1).eq.'!')) THEN
+    IF(.NOT.ALLOCATED(comment)) ALLOCATE(comment(0))
     i=7
     IF(signal(1:1).eq.'!') i=2
-    ! Behold, Fortran 2003! 
-    comment=[comment,line(i:120)]
+    num_com=num_com+1
+    line=ADJUSTL(line(i:120))
+    comment=[comment,line]
     GOTO 2
   ENDIF
   IF (.NOT.( (signal(6:6).eq.':') .AND. (ANY(allowed_types.eq.signal(1:4))) .AND. (ANY(allowed_ends.eq.signal(5:5))) )) GOTO 2
@@ -367,15 +368,16 @@ Program InpRead
     i=FINDLOC(allowed_ends,type(5:5),dim=1)
     
     DO j=1,3
+      ! TRANSLATIONS
       k=(i-2)*n_molecules+j
-
       start_position=INDEX(line,'t'//axis_letter(j))+3
       IF(start_position.ne.3) THEN
         trro_logic(k)%is_present=.TRUE.
         end_position=check_end(line,start_position)+start_position-2
         READ(line(start_position:end_position),*,err=85) molecule(i)%Tr(j)
       ENDIF
-      
+
+      !ROTATIONS
       k=k+3*(n_molecules-1)
       start_position=INDEX(line,'r'//axis_letter(j))+3
       IF(start_position.ne.3) THEN
@@ -414,9 +416,11 @@ Program InpRead
     IF(ANY((/0,1/).eq.end_position)) GOTO 2
     flags_logic%is_present=.TRUE.
     DO WHILE(.TRUE.)
-      WRITE(tmp,'(a)') line(1:end_position-1)  
+      num_flg=num_flg+1
+      tmp=line(1:end_position-1)  
       IF(.NOT.(ANY(calc_flags.eq.tmp(1:5)))) GOTO 84
-      flag=[flag,tmp]
+      IF(.NOT.ALLOCATED(flag)) ALLOCATE(flag(0))
+      flag=[flag,tmp(1:5)]
       line=ADJUSTL(line(end_position:120))
       end_position=check_end(line)
       IF(11.lt.end_position) GOTO 84
@@ -446,9 +450,6 @@ Program InpRead
     IF(ANY((/0,1/).eq.end_position)) GOTO 89
     READ(line(1:end_position-1),*,err=89) lamda
     
-
-
-    
   END SELECT
   GOTO 2
 
@@ -463,7 +464,7 @@ Program InpRead
     DO j=1,4
       WRITE(line,'(f8.3)') molecule(i)%energy(j)
       line=ADJUSTL(line)
-      CALL energy_logic((i-1)*4+j)%throw_error("Using the default value ("//line(1:4)//" eV)!")
+      CALL energy_logic((i-1)*4+j)%throw_error("Default value: "//line(1:4)//" eV!")
     ENDDO
   ENDDO
   DO i=2,n_molecules
@@ -476,6 +477,9 @@ Program InpRead
       CALL trro_logic((i-2)*n_molecules+j+3*(n_molecules-1))%throw_error("Default value: "//line(1:LEN_TRIM(line))//"°!")
     ENDDO
   ENDDO
+  WRITE(line,'(f4.1)') lamda
+  line=ADJUSTL(line)
+  CALL lamda_logic%throw_error("Default value: "//line(1:LEN_TRIM(line))//" eV!")
   ! ERRORS
   CALL lib_struct()
   CALL aostruct()
@@ -502,6 +506,7 @@ Program InpRead
   ENDDO
   CALL CPU_TIME(time_end)
   PRINT '(36x,a,f14.2,a)', "*CPU time elapsed (total): ", time_end-time_start, " s"
+  CALL exact_elements()
 
   GOTO 9
 
